@@ -1,0 +1,6 @@
+(jbuild_version 1)
+
+(library
+ ((name iex_model_examples)
+  (libraries (iex_model))
+  (public_name iex_model_examples)))

@@ -1,0 +1,147 @@
+(* Theorems about the priority relation *)
+
+(*********************************)
+(***    Ordering properties    ***)
+(*********************************)
+
+(* The has_priority function is meant to define a strict order
+   on IEX orders. Therefore we expect the following three
+   properties to hold:
+
+     1) Irreflexivity:
+          no order should have priority over itself
+
+     2) Asymmetry:
+          if o1 has priority over o2 then o2 should
+          not also have priority over o2
+
+     3) Transitivity:
+          if o1 has priority over o2, and o2 has
+          priority over order o3 then o1 should
+          also have priority over o3
+
+   Without these properties operations such as "sorting by priority"
+   or "selecting the highest priority order" are not well defined.
+
+   Below we show that all three properties hold for the IEX Auction
+   priority logic. These properties may seem obvious, but note that
+   they are not always true. For an example of a case where
+   transitivity did not hold see the following whitepaper:
+
+     CASE STUDY: 2015 SEC Fine Against UBS ATS
+     https://www.imandra.ai/case-study-2015-sec-fine-against-ubs-ats/
+
+*)
+
+(* First we disable some dead ends for efficiency, and enable
+   has_priority so that we can prove things about it!
+*)
+
+:disable priority_effective_price is_displayed
+:enable has_priority
+
+(* The priority ordering is irreflexive *)
+
+theorem priority_irrefl(o1, side, mdata, cp) =
+  not(has_priority(side, o1, o1, mdata, cp))
+;;
+
+(* The priority ordering is asymmetric *)
+
+theorem priority_asym(o1, o2, side, mdata, cp) =
+  has_priority(side, o1, o2, mdata, cp)
+  ==> not(has_priority(side, o2, o1, mdata, cp))
+;;
+
+(* The price_geq relation is transitive. Proving this lemma first
+   and then disabling price_geq speeds up the next proof a bit.
+*)
+
+theorem[rw] price_geq_trans(o1, o2, o3, side, mdata, cp) =
+  price_geq(side, o1, o2, mdata, cp)
+  && price_geq(side, o2, o3, mdata, cp)
+  ==> price_geq(side, o1, o3, mdata, cp)
+;;
+:disable price_geq
+
+(* The priority ordering is transitive *)
+
+theorem priority_trans(o1, o2, o3, side, mdata, cp) =
+  has_priority(side, o1, o2, mdata, cp)
+  && has_priority(side, o2, o3, mdata, cp)
+  ==> has_priority(side, o1, o3, mdata, cp)
+;;
+
+(* Therefore the priority ordering has all the desired properties. *)
+
+
+(*********************************)
+(***   Invariance properties   ***)
+(*********************************)
+
+(* The order priority is intended to be price/display/time ordering.
+   Therefore an order's priority should only depend on its order_type
+   field (which includes the limit price for limit orders) and its
+   timestamp field. An order's priority should not be effected by any
+   other information such as its quantity, order id, etc.
+
+   The way that we make this statement precise is to say that if two
+   orders, o1 and o2, have equal order_type and timestamp fields then
+   o1 has priority over another order o3 if and only if o2 has
+   priority over o3. Another way to say this is that has_priority is
+   invariant (under this relation) in its second argument.
+
+   We also want to check that if o1 and o2 have equal order_type and
+   timestamp fields then another order o3 has priority over o1 iff
+   o3 has priority over o2, i.e. has_priority is also invariant in
+   its third argument.
+
+*)
+
+(* First enable everthing we need to reason about *)
+
+:enable priority_effective_price price_geq has_priority is_displayed
+
+(* The function has_priority is invariant in its second argument *)
+
+theorem priority_inv_under_ot_ts_arg2(o1, o2, o3, side, mdata, cp) =
+  o1.order_type = o2.order_type
+  && o1.timestamp = o2.timestamp
+  ==> has_priority(side, o1, o3, mdata, cp)
+      = has_priority(side, o2, o3, mdata, cp)
+;;
+
+(* The function has_priority is invariant in its third argument *)
+
+theorem priority_inv_under_ot_ts_arg3(o1, o2, o3, side, mdata, cp) =
+  o1.order_type = o2.order_type
+  && o1.timestamp = o2.timestamp
+  ==> has_priority(side, o3, o1, mdata, cp)
+      = has_priority(side, o3, o2, mdata, cp)
+;;
+
+
+(* We can also show similar invariance properties for other functions
+   in Priority.ml:
+*)
+
+theorem price_inv_under_ot(o1, o2, o3, side, mdata, cp) =
+  o1.order_type = o2.order_type
+  ==>
+  priority_effective_price(side, o1, mdata, cp)
+    = priority_effective_price(side, o2, mdata, cp)
+;;
+
+theorem price_geq_inv_under_ot_arg2(o1, o2, o3, side, mdata, cp) =
+  o1.order_type = o2.order_type
+  ==> price_geq(side, o1, o3, mdata, cp)
+    = price_geq(side, o2, o3, mdata, cp)
+;;
+
+theorem price_geq_inv_under_ot_arg3(o1, o2, o3, side, mdata, cp) =
+  o1.order_type = o2.order_type
+  ==> price_geq(side, o3, o1, mdata, cp)
+    = price_geq(side, o3, o2, mdata, cp)
+;;
+
+:disable priority_effective_price price_geq has_priority is_displayed

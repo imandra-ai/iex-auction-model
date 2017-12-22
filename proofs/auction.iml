@@ -1,0 +1,255 @@
+(* Theorems about the overall auction logic *)
+
+(*********************************)
+(*** More orders, more volume? ***)
+(*********************************)
+
+(* Intuitively, it should be the case that the more orders
+   participate in the auction match the greater the matched
+   volume should be. Therefore we might expect to be able to
+   prove a theorem such as:
+
+     theorem volume_increases(buy, buys, sells, mdata) =
+       let fills = conduct_auction(buys, sells, mdata) in
+       let fills2 = conduct_auction(buy :: buys, sells, mdata) in
+       total_traded_volume(fills) <= total_traded_volume(fills2)
+     ;;
+
+   However, it turns out that this is not actually true due
+   to certain behaviours involving non-displayed orders and
+   short sale order handling. You can see examples of this
+   in the Examples.ml file.
+
+   These counterexamples to our previous conjecture were
+   found using Imandra's 'dash' tool, which allows us to
+   randomly generate many examples to test our theorems
+   before we attempt to prove them.
+
+   So, we made a conjecture about the behaviour of the
+   auction logic based on our inutition, and we used
+   Imandra to discover some counterexamples which disproved
+   the conjecture. This is good (we perhaps now understand
+   the auction logic better than we did before), but can we
+   still prove something along the lines of our original
+   goal? If we eliminate the counterexamples that we have
+   discovered then does our intuition hold, or are there
+   yet more classes of counterexamples?
+
+   Below we show a restricted version of our original
+   conjecture.
+*)
+
+(* The total quantity of a list of orders: *)
+
+let rec total_qty orders =
+  match orders with
+  | [] -> 0
+  | order :: orders ->
+    order.quantity + total_qty(orders)
+;;
+
+(* A predicate which is true iff every order has a
+   (strictly) positive quantity. This is a validity
+   predicate. We expect all orders to strictly positive
+   quantities. Anything else would be an invalid input.
+*)
+
+:redef on
+let rec qtys_positive(orders) =
+  match orders with
+  | [] -> true
+  | order :: orders ->
+    order.quantity > 0 && qtys_positive(orders)
+;;
+:redef off
+
+(* A simple lemma relating the previous definitions: *)
+
+theorem[arith] total_qty_positive (orders) = 
+  qtys_positive(orders)
+    ==> total_qty(orders) >= 0
+;;
+
+(* We now prove an important fact about auction_loop
+   which will make it much easier to reason about the
+   volume traded.
+
+   The function auction_loop repeatedly selects the
+   highest ranked orders and generates a fill between
+   them. The result is a list of fills which tell us
+   which orders participated in the auction match and
+   how they were matched with each other.
+
+   If we take the output of auction_loop and sum the
+   quantities of the individual fills then we get the
+   total volume traded in the auction, which we expect
+   to be equal to min(buy_volume, sell_volume).
+
+   We can use Imandra to verify this property like so:
+*)
+
+:enable auction_loop
+theorem[rw] total_volume_auction_loop(buys, sells) =
+  qtys_positive(buys)
+  && qtys_positive(sells)
+  ==> 
+    let fills = auction_loop(buys, sells) in
+    total_traded_volume(fills)
+      = min(total_qty(buys), total_qty(sells))
+;;
+:disable auction_loop
+
+(* We now move on to proving theorems about the function
+   conduct_auction. In the "common case" what this function
+   does is simply call sort_and_filter_orders on the buys
+   and sells and then pass these to auction_loop. Since we
+   have our previous lemma to handle auction_loop, we now
+   need to prove some theorems about sort_and_filter_orders.
+*)
+
+:enable sort_and_filter_orders
+:disable eligable_for_auction
+
+(* First, we show that if we give sort_and_filter_orders
+   a valid list of order (all quantities > 0) then it
+   returns a valid list of orders.
+*)
+
+theorem[rw] sort_filter_qtys_pos(side, orders, mdata, cp) =
+  qtys_positive(orders) ==>
+    qtys_positive(sort_and_filter_orders(side, orders, mdata, cp))
+;;
+
+(* Next, we show that if we give sort_and_filter_orders
+   an extra order then the total quantity of the output
+   increases.
+*)
+
+(* A useful lemma about insert_order: *)
+
+:enable insert_order
+theorem[rw] total_qty_insert_order(side, order, orders, mdata, cp) =
+  eligable_for_auction(side, order, mdata, cp)
+  ==>
+    total_qty(insert_order(side, order, orders, mdata, cp))
+      = order.quantity + total_qty(orders)
+;;
+:disable insert_order
+
+(* The theorem about the total quantity of the output
+   of sort_and_filter_orders:
+*)
+
+theorem[arith] total_qty_sort_filter_leq(side, order, orders, mdata, cp) =
+  order.quantity > 0
+  ==>
+    total_qty(sort_and_filter_orders(side, orders, mdata, cp))
+        <= total_qty(sort_and_filter_orders(side, order :: orders, mdata, cp))
+;;
+
+(* N.B. above we proved an inequality and marked it as an
+   arithmetic rule. However, we could equally have proved
+   an equality and marked it as a rewrite rule. Below we
+   show how this could be done. If you remove the [aith]
+   annotation from the previous theorem (so that Imandra
+   doesn't make use of it when reasoning) and add a [rw]
+   annotation to the next theorem (so that Imandra does
+   use it) then the final result still goes through.
+*)
+
+theorem total_qty_sort_filter_eq(side, order, orders, mdata, cp) =
+  total_qty(sort_and_filter_orders(side, order :: orders, mdata, cp))
+    =
+      if eligable_for_auction(side, order, mdata, cp) then
+        order.quantity +
+        total_qty(sort_and_filter_orders(side, orders, mdata, cp))
+      else
+        total_qty(sort_and_filter_orders(side, orders, mdata, cp))
+;;
+
+:disable total_qty sort_and_filter_orders
+
+
+(* Now we come to our main result. We show a restricted
+   version of the original conjecture. Specifically, if
+   we add an extra buy order into the auction and:
+
+     1) The clearing price does not change
+     2) The original auction did not trigger the short
+        sale order handling behaviour
+
+   then the total volume traded in the auction will
+   always increase (or stay the same).
+*)
+
+(* First, a predicate that tells us that the clearing
+   price has not changed:
+*)
+
+let clearing_price_unchanged(buy, buys, sells, mdata) =
+  calc_clearing_price(buys, sells, mdata)
+    = calc_clearing_price(buy :: buys, sells, mdata)
+;;
+
+(* Next, a predicate that tells us when we trigger the
+   short sale order handling behaviour:
+*)
+
+let triggers_sho_behaviour(buys, sells, mdata) =
+  match calc_clearing_price(buys, sells, mdata) with
+  | None -> false
+  | Some clearing_price ->
+    mdata.short_circuit_breaker && clearing_price <= mdata.nbb
+;;
+
+(* And now, the final result: *)
+
+theorem volume_increases_with_extra_buy(buy, buys, sells, mdata, result, result2) =
+  buy.quantity > 0
+  && qtys_positive(buys)
+  && qtys_positive(sells)
+  && clearing_price_unchanged(buy, buys, sells, mdata)
+  && not(triggers_sho_behaviour(buys, sells, mdata))
+  && conduct_auction(buys, sells, mdata) = Some result
+  && conduct_auction(buy :: buys, sells, mdata) = Some result2
+  ==>
+    total_traded_volume(result.fills)
+      <= total_traded_volume(result2.fills)
+;;
+
+(* The previous result concerns the case where we have
+   an extra buy order participating in the auction. It
+   is very straightforward to generalise this result
+   to apply to an arbitrary order (either a buy or a
+   sell order) like so:
+*)
+
+let clearing_price_unchanged2(side, order, buys, sells, mdata) =
+  let new_clearing_price =
+    match side with
+    | Buy -> calc_clearing_price(order :: buys, sells, mdata)
+    | Sell -> calc_clearing_price(buys, order :: sells, mdata)
+  in
+  new_clearing_price
+    = calc_clearing_price(buys, sells, mdata)
+;;
+
+let conduct_auction_extra_order(side, order, buys, sells, mdata) =
+  match side with
+  | Buy -> conduct_auction(order :: buys, sells, mdata)
+  | Sell -> conduct_auction(buys, order :: sells, mdata)
+;;
+
+theorem volume_increases_with_extra_order(side, order, buys, sells, mdata, result, result2) =
+  order.quantity > 0
+  && qtys_positive(buys)
+  && qtys_positive(sells)
+  && clearing_price_unchanged2(side, order, buys, sells, mdata)
+  && not(triggers_sho_behaviour(buys, sells, mdata))
+  && conduct_auction(buys, sells, mdata) = Some result
+  && conduct_auction_extra_order(side, order, buys, sells, mdata)
+       = Some result2
+  ==>
+    total_traded_volume(result.fills)
+      <= total_traded_volume(result2.fills)
+;;

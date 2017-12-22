@@ -1,0 +1,10 @@
+let load_path = "iex-auction-model/model/" ;;
+let load s = ":l " ^ load_path ^ s ;;
+
+Reflect.eval (load "prelude.ml");;
+Reflect.eval (load "price.ml");;
+Reflect.eval (load "order.ml");;
+Reflect.eval (load "priority.ml");;
+Reflect.eval (load "fill.ml");;
+Reflect.eval (load "clearing_price.ml");;
+Reflect.eval (load "auction.ml");;

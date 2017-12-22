@@ -1,0 +1,8 @@
+:redef on
+let load_path = "iex-auction-model/proofs/" ;;
+let load s = ":l " ^ load_path ^ s ;;
+:redef off
+
+Reflect.eval (load "priority.iml");;
+Reflect.eval (load "clearing_price.iml");;
+Reflect.eval (load "auction.iml");;

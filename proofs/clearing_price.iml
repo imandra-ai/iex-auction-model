@@ -1,0 +1,160 @@
+(* Some theorems about the clearing price *)
+
+(************************************)
+(***  Sanity check: can_trade_at  ***)
+(************************************)
+
+(* First, a quick sanity check on our definition of can_trade_at.
+   If an order can trade at at price p1, and p1 is more or as
+   aggressive as p2, then that order should be able to trade at p2.
+
+   We mark this a a rewrite rule ([rw]) so that Imandra will use
+   it when reasoning.
+*)
+
+theorem[rw] can_trade_less_agg((side, p1, p2, order, mdata) : side * int * int * order * market_data) =
+  can_trade_at(side, order, p1, mdata)
+  && is_as_aggressive_as(side, p1, p2)
+  ==> 
+    can_trade_at(side, order, p2, mdata)
+;;
+
+(* We now disable can_trade_at and is_as_aggressive_as. Imandra will
+   no longer expand their definitions. But it will still use the
+   rewrite rule defined above.
+*)
+
+:disable can_trade_at is_as_aggressive_as
+
+
+(***************************************)
+(***  Sanity check: volume_at_price  ***)
+(***************************************)
+
+(* Second, a couple of sanity checks on the definition of
+   volume_at_price.
+*)
+   
+(* If we add another order (assuming that order's quantity is
+   non-negative) then the total volume should increase.
+   We mark this theorem as an arithmetic fact ([arith]). This means
+   that Imandra will use this fact when doing arithmetic reasoning
+*)
+
+:enable volume_at_price
+theorem[arith] volume_more_buys (side, price, order, orders, mdata) =
+  0 <= order.quantity ==>
+  volume_at_price (side, price, orders, mdata)
+    <= volume_at_price (side, price, order :: orders, mdata)
+;;
+
+(* A predicate which asserts that all orders have a positive quantity *)
+
+let rec qtys_positive(orders) =
+  match orders with
+  | [] -> true
+  | order :: orders ->
+    order.quantity > 0 && qtys_positive(orders)
+;;
+
+(* The volume available to trade on one side should be monotone.
+   This means that if we have prices p1 and p2 with p1 more or as
+   aggressive as p2 (higher if side = Buy, lower if side = Sell),
+   then the volume available to trade at p1 should be less than
+   or equal to the volume available at p2.
+*)
+
+theorem[arith] volume_monotone (side, p1, p2, orders, mdata : side * int * int * order list * market_data) =
+  (is_as_aggressive_as(side, p1, p2)
+  && qtys_positive(orders))
+  ==>
+    volume_at_price(side, p1, orders, mdata) 
+      <= volume_at_price(side, p2, orders, mdata) 
+;;
+:disable volume_at_price
+
+(********************************)
+(***  Claims in the IEX spec  ***)
+(********************************)
+
+(* The IEX Auction Process Specification includes a section
+   which describes the clearing price for the Opening/Closing
+   auction by making a series of statements such as:
+
+     "The IEX Opening/Closing Auction has been designed to
+      efficiently maximize the number of shares executed at
+      a single price"
+
+     "If more than one price maximizes the number of shares...
+      the Opening/Closing Auction will occur at the price at
+      or within such range that is not lower (higher) than the
+      most aggressive unexecuted buy (sell) order"
+
+   This approach can be good for certain purposes, such as
+   communicating a high-level understanding of how the clearing
+   price is calculated, but it does not provide the reader with
+   an explicit algorithm for calculating this price so that they
+   can gain a deeper understand of how the price is calculated
+   in all situations.
+   
+   In Clearing_price.ml we present a explicit algorithm for
+   calculating the clearing price. We do not know if this
+   algorithm always produces the result intended by IEX
+   (although in Examples.ml we verify that it does produce the
+   correct result for all the examples in the specification).
+   
+   We can now use Imandra to link our algorithm to statements
+   made in the specification, such as the fact that volume is
+   maximised at the clearing price or that the calculated
+   price is always within the auction collar. We show the
+   latter below:
+
+*)
+
+(* First we prove that collar_lower is always less than
+   collar_upper and mark this as an arithmetic rule.
+*)
+
+theorem[arith] collar_order(mdata) =
+  collar_lower(mdata) < collar_upper(mdata)
+;;
+
+:disable midpoint collar_lower collar_upper
+
+(* Next, we want to show that max_volume_lowest_price and
+   max_volume_highest_price both return values within the
+   bounds passed to them as their first two arguments.
+*)
+
+:disable volume_traded buy_excess_at_price
+
+theorem[arith] mvhp_bounded_below(lower, upper, buys, sells, mdata) =
+  lower <= upper ==>
+  lower <= max_volume_highest_price(lower, upper, buys, sells, mdata)
+;;
+
+theorem[arith] mvhp_bounded_above(lower, upper, buys, sells, mdata) =
+  max_volume_highest_price(lower, upper, buys, sells, mdata) <= upper
+;;
+
+theorem[arith] mvlp_bounded_below(lower, upper, buys, sells, mdata) =
+  lower <= upper ==>
+  lower <= max_volume_lowest_price(lower, upper, buys, sells, mdata)
+;;
+
+theorem[arith] mvlp_bounded_above(lower, upper, buys, sells, mdata) =
+  max_volume_lowest_price(lower, upper, buys, sells, mdata) <= upper
+;;
+
+(* Finally, we show that the clearing price is always
+   between the lower and upper auction collar.
+*)
+
+:enable calc_clearing_price
+theorem price_within_collar(clearing_price, buys, sells, mdata) =
+  calc_clearing_price(buys, sells, mdata) = Some clearing_price
+  ==>
+    collar_lower(mdata) <= clearing_price
+    && clearing_price <= collar_upper(mdata)
+;;
+:disable calc_clearing_price
